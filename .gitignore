@@ -1,0 +1,22 @@
+# Neovim/plugin local state
+.nvim.lua
+.nvimrc
+
+# Lua tooling
+.luarocks/
+luarocks/
+
+# Test/coverage output
+.luacov
+luacov.report.out
+coverage/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+.DS_Store
+
+# pi local workspace state
+.pi/
