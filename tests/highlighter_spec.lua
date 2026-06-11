@@ -1,8 +1,11 @@
 dofile("tests/minimal_init.lua")
 local highlighter = require("diff-sitter.highlighter")
-local language = require("diff-sitter.language")
+local hunk_preparer = require("diff-sitter.hunk_preparer") -- test support for optional parser checks
 
-test("missing parser skips and clears namespace", function()
+-- These tests exercise the intentional highlighter.apply seam. Synthetic hunks are
+-- the accepted input contract here; diff parsing/preparation behavior belongs in
+-- hunk_preparer or public integration tests.
+test("missing parser skips hunk and clears stale namespace marks", function()
   local b = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(b, 0, -1, false, { "+local x = 1" })
   local ns = vim.api.nvim_create_namespace("diff-sitter-test-missing")
@@ -12,7 +15,7 @@ test("missing parser skips and clears namespace", function()
 end)
 
 test("lua parser places source extmarks after prefix when available", function()
-  if not language.has_parser("lua") then
+  if not hunk_preparer._has_parser("lua") then
     return
   end
   local b = vim.api.nvim_create_buf(false, true)
@@ -25,7 +28,7 @@ test("lua parser places source extmarks after prefix when available", function()
 end)
 
 test("multiline captures use valid source line end columns", function()
-  if not language.has_parser("lua") then
+  if not hunk_preparer._has_parser("lua") then
     return
   end
   local b = vim.api.nvim_create_buf(false, true)

@@ -62,7 +62,7 @@ local function wipe(bufnr)
   end
 end
 
-local function apply_hunk(source_bufnr, ns, hunk, config)
+local function with_scratch_hunk(hunk, fn)
   if not hunk.lang or not hunk.code_lines or #hunk.code_lines == 0 then
     return
   end
@@ -72,54 +72,50 @@ local function apply_hunk(source_bufnr, ns, hunk, config)
   vim.bo[scratch].bufhidden = "wipe"
   vim.bo[scratch].swapfile = false
 
-  local ok = pcall(function()
+  pcall(function()
     vim.api.nvim_buf_set_lines(scratch, 0, -1, false, hunk.code_lines)
+    fn(scratch)
   end)
-  if not ok then
-    wipe(scratch)
-    return
-  end
-
-  local parser_ok, parser = pcall(vim.treesitter.get_parser, scratch, hunk.lang)
-  if not parser_ok or not parser then
-    wipe(scratch)
-    return
-  end
-
-  local parse_ok, trees = pcall(parser.parse, parser)
-  if not parse_ok or not trees or not trees[1] then
-    wipe(scratch)
-    return
-  end
-
-  local query = get_query(hunk.lang)
-  if not query then
-    wipe(scratch)
-    return
-  end
-
-  local root = trees[1]:root()
-  local iter_ok, iter = pcall(function()
-    return query:iter_captures(root, scratch, 0, #hunk.code_lines)
-  end)
-  if not iter_ok or not iter then
-    wipe(scratch)
-    return
-  end
-
-  for id, node, metadata in iter do
-    local hl_group = capture_name(query, id)
-    if hl_group then
-      local range = { node:range() }
-      local start_row, start_col, end_row, end_col = range[1], range[2], range[3], range[4]
-      if metadata and metadata.range then
-        start_row, start_col, end_row, end_col = unpack(metadata.range)
-      end
-      set_segment(source_bufnr, ns, hunk.row_map, start_row, start_col, end_row, end_col, hl_group, config and config.priority)
-    end
-  end
-
   wipe(scratch)
+end
+
+local function apply_hunk(source_bufnr, ns, hunk, config)
+  with_scratch_hunk(hunk, function(scratch)
+    local parser_ok, parser = pcall(vim.treesitter.get_parser, scratch, hunk.lang)
+    if not parser_ok or not parser then
+      return
+    end
+
+    local parse_ok, trees = pcall(parser.parse, parser)
+    if not parse_ok or not trees or not trees[1] then
+      return
+    end
+
+    local query = get_query(hunk.lang)
+    if not query then
+      return
+    end
+
+    local root = trees[1]:root()
+    local iter_ok, iter = pcall(function()
+      return query:iter_captures(root, scratch, 0, #hunk.code_lines)
+    end)
+    if not iter_ok or not iter then
+      return
+    end
+
+    for id, node, metadata in iter do
+      local hl_group = capture_name(query, id)
+      if hl_group then
+        local range = { node:range() }
+        local start_row, start_col, end_row, end_col = range[1], range[2], range[3], range[4]
+        if metadata and metadata.range then
+          start_row, start_col, end_row, end_col = unpack(metadata.range)
+        end
+        set_segment(source_bufnr, ns, hunk.row_map, start_row, start_col, end_row, end_col, hl_group, config and config.priority)
+      end
+    end
+  end)
 end
 
 function M.apply(bufnr, extracted_hunks, state, config)
