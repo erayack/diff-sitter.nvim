@@ -1,5 +1,8 @@
 local M = {}
 
+local parser_cache = {}
+local language_cache = {}
+
 local extension_map = {
   rs = "rust",
   go = "go",
@@ -102,17 +105,27 @@ local function has_parser(lang)
   if not lang or lang == "" then
     return false
   end
-  if vim.treesitter and vim.treesitter.language and vim.treesitter.language.add then
-    local ok = pcall(vim.treesitter.language.add, lang)
-    return ok
+  if parser_cache[lang] ~= nil then
+    return parser_cache[lang]
   end
-  local ok = pcall(vim.treesitter.get_string_parser, "", lang)
+  local ok
+  if vim.treesitter and vim.treesitter.language and vim.treesitter.language.add then
+    ok = pcall(vim.treesitter.language.add, lang)
+  else
+    ok = pcall(vim.treesitter.get_string_parser, "", lang)
+  end
+  if ok then
+    parser_cache[lang] = true
+  end
   return ok
 end
 
 local function detect_language(path)
   if not path or path == "" then
     return nil
+  end
+  if language_cache[path] ~= nil then
+    return language_cache[path] or nil
   end
 
   local ft
@@ -139,6 +152,7 @@ local function detect_language(path)
     if not seen[lang] then
       seen[lang] = true
       if has_parser(lang) then
+        language_cache[path] = lang
         return lang
       end
     end

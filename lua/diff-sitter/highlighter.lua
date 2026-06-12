@@ -1,5 +1,11 @@
 local M = {}
 
+local api = vim.api
+local buf_get_lines = api.nvim_buf_get_lines
+local buf_set_extmark = api.nvim_buf_set_extmark
+
+local query_cache = {}
+
 local function get_namespace(state)
   if state and state.ns then
     return state.ns
@@ -8,17 +14,26 @@ local function get_namespace(state)
 end
 
 local function get_query(lang)
+  if query_cache[lang] ~= nil then
+    return query_cache[lang]
+  end
+
+  local query = false
   if vim.treesitter.query and vim.treesitter.query.get then
-    local ok, query = pcall(vim.treesitter.query.get, lang, "highlights")
-    if ok then
-      return query
+    local ok, result = pcall(vim.treesitter.query.get, lang, "highlights")
+    if ok and result then
+      query = result
     end
   end
-  if vim.treesitter.get_query then
-    local ok, query = pcall(vim.treesitter.get_query, lang, "highlights")
-    if ok then
-      return query
+  if not query and vim.treesitter.get_query then
+    local ok, result = pcall(vim.treesitter.get_query, lang, "highlights")
+    if ok and result then
+      query = result
     end
+  end
+  if query then
+    query_cache[lang] = query
+    return query
   end
   return nil
 end
@@ -34,23 +49,27 @@ local function capture_name(query, id)
   return name
 end
 
-local function set_segment(bufnr, ns, row_map, start_row, start_col, end_row, end_col, hl_group, priority)
+local function set_segment(bufnr, ns, row_map, line_lengths, opts, start_row, start_col, end_row, end_col, hl_group)
+  opts.hl_group = hl_group
   for row = start_row, end_row do
     local map = row_map[row]
     if map then
+      local source_row = map.source_row
+      local code_col_offset = map.code_col_offset
       local line_start = row == start_row and start_col or 0
       local line_end = row == end_row and end_col or nil
       if line_end == nil then
-        local line = vim.api.nvim_buf_get_lines(bufnr, map.source_row, map.source_row + 1, false)[1] or ""
-        line_end = math.max(#line - map.code_col_offset, 0)
+        line_end = line_lengths[source_row]
+        if line_end == nil then
+          local line = buf_get_lines(bufnr, source_row, source_row + 1, false)[1] or ""
+          line_end = math.max(#line - code_col_offset, 0)
+          line_lengths[source_row] = line_end
+        end
       end
       if line_end > line_start then
-        pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, map.source_row, line_start + map.code_col_offset, {
-          end_row = map.source_row,
-          end_col = line_end + map.code_col_offset,
-          hl_group = hl_group,
-          priority = priority or 110,
-        })
+        opts.end_row = source_row
+        opts.end_col = line_end + code_col_offset
+        pcall(buf_set_extmark, bufnr, ns, source_row, line_start + code_col_offset, opts)
       end
     end
   end
@@ -62,25 +81,21 @@ local function wipe(bufnr)
   end
 end
 
-local function with_scratch_hunk(hunk, fn)
-  if not hunk.lang or not hunk.code_lines or #hunk.code_lines == 0 then
-    return
-  end
-
+local function make_scratch()
   local scratch = vim.api.nvim_create_buf(false, true)
   vim.bo[scratch].buftype = "nofile"
   vim.bo[scratch].bufhidden = "wipe"
   vim.bo[scratch].swapfile = false
+  return scratch
+end
+
+local function apply_hunk(source_bufnr, scratch, ns, hunk, line_lengths, config)
+  if not hunk.lang or not hunk.code_lines or #hunk.code_lines == 0 then
+    return
+  end
 
   pcall(function()
     vim.api.nvim_buf_set_lines(scratch, 0, -1, false, hunk.code_lines)
-    fn(scratch)
-  end)
-  wipe(scratch)
-end
-
-local function apply_hunk(source_bufnr, ns, hunk, config)
-  with_scratch_hunk(hunk, function(scratch)
     local parser_ok, parser = pcall(vim.treesitter.get_parser, scratch, hunk.lang)
     if not parser_ok or not parser then
       return
@@ -104,15 +119,16 @@ local function apply_hunk(source_bufnr, ns, hunk, config)
       return
     end
 
+    local opts = { priority = (config and config.priority) or 110 }
     for id, node, metadata in iter do
       local hl_group = capture_name(query, id)
       if hl_group then
-        local range = { node:range() }
-        local start_row, start_col, end_row, end_col = range[1], range[2], range[3], range[4]
+        local start_row, start_col, end_row, end_col = node:range()
         if metadata and metadata.range then
-          start_row, start_col, end_row, end_col = unpack(metadata.range)
+          local range = metadata.range
+          start_row, start_col, end_row, end_col = range[1], range[2], range[3], range[4]
         end
-        set_segment(source_bufnr, ns, hunk.row_map, start_row, start_col, end_row, end_col, hl_group, config and config.priority)
+        set_segment(source_bufnr, ns, hunk.row_map, line_lengths, opts, start_row, start_col, end_row, end_col, hl_group)
       end
     end
   end)
@@ -125,10 +141,13 @@ function M.apply(bufnr, extracted_hunks, state, config)
   end
   local ns = get_namespace(state)
   vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+  local scratch = make_scratch()
+  local line_lengths = {}
   for _, hunk in ipairs(extracted_hunks or {}) do
     -- Best-effort highlighting: skip failed hunks.
-    pcall(apply_hunk, bufnr, ns, hunk, config or {})
+    pcall(apply_hunk, bufnr, scratch, ns, hunk, line_lengths, config or {})
   end
+  wipe(scratch)
 end
 
 return M
