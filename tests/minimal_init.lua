@@ -7,7 +7,10 @@ function _G.test(name, fn)
 end
 
 function _G.eq(actual, expected)
-  assert(vim.deep_equal(actual, expected), string.format("expected %s, got %s", vim.inspect(expected), vim.inspect(actual)))
+  assert(
+    vim.deep_equal(actual, expected),
+    string.format("expected %s, got %s", vim.inspect(expected), vim.inspect(actual))
+  )
 end
 
 function _G.ok(value, message)

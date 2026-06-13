@@ -3,7 +3,13 @@ test:
         nvim --headless -u NONE -c "set rtp^=." -l "$f" || exit 1; \
     done
 
+format:
+    stylua lua plugin tests
+
+format-check:
+    stylua --check lua plugin tests
+
 lint:
     luacheck lua plugin tests
 
-check: lint test
+check: format-check lint test

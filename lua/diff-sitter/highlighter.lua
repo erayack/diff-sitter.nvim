@@ -35,6 +35,7 @@ local function get_query(lang)
     query_cache[lang] = query
     return query
   end
+  query_cache[lang] = false
   return nil
 end
 
@@ -128,7 +129,18 @@ local function apply_hunk(source_bufnr, scratch, ns, hunk, line_lengths, config)
           local range = metadata.range
           start_row, start_col, end_row, end_col = range[1], range[2], range[3], range[4]
         end
-        set_segment(source_bufnr, ns, hunk.row_map, line_lengths, opts, start_row, start_col, end_row, end_col, hl_group)
+        set_segment(
+          source_bufnr,
+          ns,
+          hunk.row_map,
+          line_lengths,
+          opts,
+          start_row,
+          start_col,
+          end_row,
+          end_col,
+          hl_group
+        )
       end
     end
   end)

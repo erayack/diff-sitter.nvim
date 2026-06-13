@@ -19,6 +19,6 @@ files["tests/minimal_init.lua"] = {
   },
 }
 
--- Keep lint focused on correctness for this small plugin; formatting is not
--- enforced here because stylua is not currently installed in this environment.
+-- Keep lint focused on correctness for this small plugin; formatting is
+-- enforced separately by stylua.
 max_line_length = false

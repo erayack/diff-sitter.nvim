@@ -60,6 +60,112 @@ test("prepares added file hunks from /dev/null headers", function()
   eq(out[1].code_lines, { "local x = 1" })
 end)
 
+test("prepares hunks for quoted diff git paths with spaces", function()
+  local out = expect_lua_hunks({
+    'diff --git "a/foo bar.lua" "b/foo bar.lua"',
+    '--- "a/foo bar.lua"',
+    '+++ "b/foo bar.lua"',
+    "@@ -1 +1 @@",
+    "+local x = 1",
+  })
+  if not out then
+    return
+  end
+
+  eq(#out, 1)
+  eq(out[1].source_start_row, 4)
+  eq(out[1].source_end_row, 5)
+  eq(out[1].code_lines, { "local x = 1" })
+end)
+
+test("prepares hunks for quoted header-only paths with spaces and metadata", function()
+  local out = expect_lua_hunks({
+    '--- "a/foo bar.lua"    2026-01-01',
+    '+++ "b/foo bar.lua"    2026-01-01',
+    "@@ -1 +1 @@",
+    "+local x = 1",
+  })
+  if not out then
+    return
+  end
+
+  eq(#out, 1)
+  eq(out[1].source_start_row, 3)
+  eq(out[1].source_end_row, 4)
+  eq(out[1].code_lines, { "local x = 1" })
+end)
+
+test("prepares hunks for quoted paths with escaped quotes", function()
+  local out = expect_lua_hunks({
+    'diff --git "a/foo\\"bar.lua" "b/foo\\"bar.lua"',
+    '--- "a/foo\\"bar.lua"',
+    '+++ "b/foo\\"bar.lua"',
+    "@@ -1 +1 @@",
+    "+local x = 1",
+  })
+  if not out then
+    return
+  end
+
+  eq(#out, 1)
+  eq(out[1].code_lines, { "local x = 1" })
+end)
+
+test("caches unresolved path language detection misses", function()
+  local original_match = vim.filetype.match
+  local calls = 0
+  vim.filetype.match = function(args)
+    if args and args.filename == "cache-miss.unknown_cache_ext_xyz" then
+      calls = calls + 1
+      return nil
+    end
+    return original_match(args)
+  end
+
+  local ok_call, err = pcall(function()
+    local lines = {
+      "diff --git a/cache-miss.unknown_cache_ext_xyz b/cache-miss.unknown_cache_ext_xyz",
+      "@@",
+      "+x",
+    }
+    eq(#preparer.prepare_lines(0, lines, {}), 0)
+    eq(#preparer.prepare_lines(0, lines, {}), 0)
+  end)
+  vim.filetype.match = original_match
+
+  if not ok_call then
+    error(err)
+  end
+  eq(calls, 1)
+end)
+
+test("caches missing parser checks", function()
+  local original_add = vim.treesitter.language and vim.treesitter.language.add
+  if not original_add then
+    return
+  end
+
+  local calls = 0
+  vim.treesitter.language.add = function(lang)
+    if lang == "missing_cache_lang_xyz" then
+      calls = calls + 1
+      error("missing parser")
+    end
+    return original_add(lang)
+  end
+
+  local ok_call, err = pcall(function()
+    eq(preparer._has_parser("missing_cache_lang_xyz"), false)
+    eq(preparer._has_parser("missing_cache_lang_xyz"), false)
+  end)
+  vim.treesitter.language.add = original_add
+
+  if not ok_call then
+    error(err)
+  end
+  eq(calls, 1)
+end)
+
 test("treats hunk body --- and +++ lines as code lines", function()
   local out = expect_lua_hunks({
     "diff --git a/init.lua b/init.lua",
@@ -119,7 +225,8 @@ test("skips empty oversized and unknown-language hunks", function()
   })
   eq(#preparer.prepare(unknown, {}), 0)
 
-  local oversized = buffer_with({ "diff --git a/init.lua b/init.lua", "@@", "\\ No newline at end of file", "+local x = 1" })
+  local oversized =
+    buffer_with({ "diff --git a/init.lua b/init.lua", "@@", "\\ No newline at end of file", "+local x = 1" })
   eq(#preparer.prepare(oversized, { max_hunk_lines = 1 }), 0)
 
   local empty = buffer_with({ "diff --git a/init.lua b/init.lua", "@@", "\\ No newline at end of file" })
@@ -128,7 +235,10 @@ end)
 
 test("unknown and missing language inputs do not throw", function()
   local ok_call = pcall(function()
-    preparer.prepare(buffer_with({ "diff --git a/file.unknown_extension_xyz b/file.unknown_extension_xyz", "@@", "+x" }), {})
+    preparer.prepare(
+      buffer_with({ "diff --git a/file.unknown_extension_xyz b/file.unknown_extension_xyz", "@@", "+x" }),
+      {}
+    )
     preparer.prepare_lines(0, { "@@", "+x" }, {})
   end)
   ok(ok_call)

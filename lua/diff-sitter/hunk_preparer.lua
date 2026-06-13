@@ -38,6 +38,78 @@ local function normalize_path(path)
   return path:gsub("^a/", ""):gsub("^b/", "")
 end
 
+local function parse_path_token(text, start_index)
+  local index = start_index or 1
+  while index <= #text and text:sub(index, index):match("%s") do
+    index = index + 1
+  end
+
+  if index > #text then
+    return nil, nil
+  end
+
+  if text:sub(index, index) ~= '"' then
+    local token_start = index
+    while index <= #text and not text:sub(index, index):match("%s") do
+      index = index + 1
+    end
+    return text:sub(token_start, index - 1), index
+  end
+
+  index = index + 1
+  local parts = {}
+  while index <= #text do
+    local char = text:sub(index, index)
+    if char == '"' then
+      return table.concat(parts), index + 1
+    end
+    if char == "\\" and index < #text then
+      local next_char = text:sub(index + 1, index + 1)
+      if next_char == '"' or next_char == "\\" then
+        table.insert(parts, next_char)
+        index = index + 2
+      else
+        table.insert(parts, char)
+        index = index + 1
+      end
+    else
+      table.insert(parts, char)
+      index = index + 1
+    end
+  end
+
+  return nil, nil
+end
+
+local function parse_diff_git_paths(line)
+  local _, after_prefix = line:find("^diff %-%-git%s+")
+  if not after_prefix then
+    return nil, nil
+  end
+
+  local old_path, next_index = parse_path_token(line, after_prefix + 1)
+  if not old_path then
+    return nil, nil
+  end
+
+  local new_path = parse_path_token(line, next_index)
+  if not new_path then
+    return nil, nil
+  end
+
+  return old_path, new_path
+end
+
+local function parse_file_header_path(line, marker)
+  local _, after_prefix = line:find("^" .. vim.pesc(marker) .. "%s+")
+  if not after_prefix then
+    return nil
+  end
+
+  local path = parse_path_token(line, after_prefix + 1)
+  return path
+end
+
 local function new_file(old_path, new_path)
   return { old_path = normalize_path(old_path), new_path = normalize_path(new_path), hunks = {} }
 end
@@ -55,7 +127,7 @@ local function parse_lines(lines)
 
   for i, line in ipairs(lines) do
     local row = i - 1
-    local a, b = line:match("^diff %-%-git%s+([^%s]+)%s+([^%s]+)")
+    local a, b = parse_diff_git_paths(line)
     if a or b then
       finish_hunk(current_hunk, row)
       current_file = new_file(a, b)
@@ -75,7 +147,7 @@ local function parse_lines(lines)
       }
       table.insert(current_file.hunks, current_hunk)
     elseif not current_hunk and line:match("^%-%-%-%s+") then
-      local path = line:match("^%-%-%-%s+([^%s]+)")
+      local path = parse_file_header_path(line, "---")
       if not current_file then
         current_file = new_file(path, nil)
         table.insert(files, current_file)
@@ -83,7 +155,7 @@ local function parse_lines(lines)
         current_file.old_path = normalize_path(path)
       end
     elseif not current_hunk and line:match("^%+%+%+%s+") then
-      local path = line:match("^%+%+%+%s+([^%s]+)")
+      local path = parse_file_header_path(line, "+++")
       if not current_file then
         current_file = new_file(nil, path)
         table.insert(files, current_file)
@@ -114,10 +186,8 @@ local function has_parser(lang)
   else
     ok = pcall(vim.treesitter.get_string_parser, "", lang)
   end
-  if ok then
-    parser_cache[lang] = true
-  end
-  return ok
+  parser_cache[lang] = ok == true
+  return parser_cache[lang]
 end
 
 local function detect_language(path)
@@ -158,6 +228,7 @@ local function detect_language(path)
     end
   end
 
+  language_cache[path] = false
   return nil
 end
 

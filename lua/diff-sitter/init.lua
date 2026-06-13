@@ -70,19 +70,23 @@ local function schedule_refresh(bufnr)
 
   local timer = vim.loop.new_timer()
   state.pending_timer = timer
-  timer:start(config.debounce_ms or 100, 0, vim.schedule_wrap(function()
-    if states[bufnr] == state then
-      state.pending_timer = nil
-      pcall(function()
-        timer:close()
-      end)
-      refresh(bufnr)
-    else
-      pcall(function()
-        timer:close()
-      end)
-    end
-  end))
+  timer:start(
+    config.debounce_ms or 100,
+    0,
+    vim.schedule_wrap(function()
+      if states[bufnr] == state then
+        state.pending_timer = nil
+        pcall(function()
+          timer:close()
+        end)
+        refresh(bufnr)
+      else
+        pcall(function()
+          timer:close()
+        end)
+      end
+    end)
+  )
 end
 
 local function attach(bufnr)
